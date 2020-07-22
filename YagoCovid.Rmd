@@ -1,0 +1,559 @@
+---
+title: "Covid-19"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation:   rows 
+    vertical_layout: fill
+runtime: shiny
+---
+
+<style>                     
+.navbar {
+  background-color:black;
+  border-color:#333;
+}
+.navbar-brand {
+  color:#fff;
+
+}
+
+.navbar-inverse .navbar-nav > .active > a {
+  background-color: #606060;
+  color: #333;
+  transition: .3s;
+}
+
+.navbar-inverse .navbar-nav > .active > a:hover {
+  background-color: #A9A9A9;
+  color: #333;
+  transition: .3s;
+}
+
+.navbar-inverse .navbar-nav > .active > a:focus {
+  background-color: #606060;
+  color: #333;
+  transition: .3s;
+}
+
+
+
+.navbar-inverse .navbar-nav > li > a:hover {
+  background-color: #606060;
+  color: #333;
+  transition: .3s;
+}
+
+.navbar-inverse .navbar-nav > li > a:focus {
+  background-color: #A9A9A9;
+  color: #333;
+  transition: .3s;
+}
+
+</style> 
+
+```{r global, include=FALSE}
+## Pacotes
+library(flexdashboard)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(devtools)
+library(plotly)
+library(crosstalk)
+library(manipulateWidget)
+#remotes::install_github("paulofelipe/D3plusR")
+library(D3plusR)
+library(janitor)
+library(tidyverse)
+library(lubridate)
+
+##
+
+## Base
+dados <- read_delim("~/R/COVID19_ATUAL_COMPLETO.csv", 
+    ";", escape_double = FALSE, trim_ws = TRUE)
+dados$data = as.Date(dados$data, "%d/%m/%y")
+
+dados = mutate(dados, casosAcumuladoLog = log(casosAcumulado))
+dados = mutate(dados, obitosAcumuladoLog = log(obitosAcumulado))
+dados = mutate(dados, emAcompanhamentoNovosLog = log(emAcompanhamentoNovos))
+dados = mutate(dados, casoAcumuladoPorPopulacao = (casosAcumulado/populacaoTCU2019)*1000)
+dados = mutate(dados, ObitosAcumuladoPorPopulacao = (obitosAcumulado/populacaoTCU2019)*1000)
+dados = mutate(dados, casoAcumuladoPorPopulacao = round(casoAcumuladoPorPopulacao, digits = 2))
+dados = mutate(dados, ObitosAcumuladoPorPopulacao = round(ObitosAcumuladoPorPopulacao, digits = 2))
+
+br = filter(dados, regiao %in% "Brasil")
+estados = filter(dados, is.na(codmun)==T)
+estados = anti_join(estados,br)
+sp = filter(estados, estado %in% "SP")
+
+
+
+top10 = filter(estados, data == max(dados$data, na.rm = T))
+top10 = arrange(top10, desc(casosAcumulado)) 
+top10 = head(top10$estado,10)
+top10 = filter(estados, estado %in% top10 & data == max(dados$data, na.rm = T))
+
+mortalidadeDiaria = group_by(br,mes = month(data))
+mortalidadeDiaria = summarize(mortalidadeDiaria, 
+                              dias = n(),
+                              casosMes = sum(casosNovos),
+                              obitoMes = sum(obitosNovos),
+                              casosDia = round(casosMes/dias, digits = 0),
+                              obitoDia = round(obitoMes/dias, digits = 0)
+                              )
+
+mortalidadeDiaria = filter(mortalidadeDiaria, obitoDia>10 )
+
+mortalidadeDiaria$mes = ordered(mortalidadeDiaria$mes, 
+                    levels =c(1:12), 
+                    labels = c("Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro",
+                               "Outubro","Novembro","Dezembro"))
+##
+
+
+
+##
+dadosMundo <- read_csv("dadosMundo.csv", 
+    locale = locale(encoding = "ISO-8859-1"))
+dadosMundo$Data = as.Date(dadosMundo$Data)
+
+dadosMundo = mutate(dadosMundo, PopulacaoMilhao = Populacao * (10^6))  
+dadosMundo = mutate(dadosMundo, casosAcumuladoLog = log(CasosAcumulados))
+dadosMundo = mutate(dadosMundo, obitosAcumuladoLog = log(ObitosAcumulados))
+dadosMundo = mutate(dadosMundo, casoAcumuladoPorPopulacao = (CasosAcumulados/PopulacaoMilhao)*1000)
+dadosMundo = mutate(dadosMundo, ObitosAcumuladoPorPopulacao = (ObitosAcumulados/PopulacaoMilhao)*1000)
+dadosMundo = mutate(dadosMundo, casoAcumuladoPorPopulacao = round(casoAcumuladoPorPopulacao, digits =2))
+dadosMundo = mutate(dadosMundo, ObitosAcumuladoPorPopulacao = round(ObitosAcumuladoPorPopulacao, digits = 2))
+
+
+top10p = filter(dadosMundo, Data == max(dadosMundo$Data, na.rm = T))
+top10p = arrange(top10p, desc(CasosAcumulados)) 
+top10p = head(top10p$PaisesPT,10)
+top10PaisHistorico = filter(dadosMundo, PaisesPT %in% top10p  & CasosAcumulados != 0)
+top10p = filter(dadosMundo, PaisesPT %in% top10p & Data == max(dadosMundo$Data, na.rm = T))
+
+
+
+##
+
+
+## Variável
+brUltimoDia = filter(br, data == max(br$data, na.rm = T))
+spUltimoDia = filter(sp, data == max(sp$data, na.rm = T))
+estadosUltimoDia = filter(estados, data == max(estados$data, na.rm = T))
+estadosUltimoDia = mutate(estadosUltimoDia, txMortalidade = (obitosAcumulado/casosAcumulado)*100)
+estadosUltimoDia = mutate(estadosUltimoDia, txMortalidade = round(txMortalidade, digits = 2))
+
+##
+
+```
+
+Brasil
+=======================================================================
+Row 
+-----------------------------------------------------------------------
+
+### totalCasos 
+
+```{r}
+
+valueBox(value = paste(format(brUltimoDia$casosAcumulado, big.mark = "."), "", sep = " "), 
+         caption = "Total de Casos Confirmados", 
+         icon = "fas fa-hospital",
+         color = "#00004d")
+```
+
+
+### recuperados {.value-box}
+
+```{r}
+valueBox(value = paste(format(brUltimoDia$Recuperadosnovos, big.mark = "."), " ", sep = "",
+                       "(", round(brUltimoDia$Recuperadosnovos/brUltimoDia$casosAcumulado, digits = 2)*100,"%",")"), 
+         caption = "Total de Recuperados", 
+         icon = "fa fa-plus-square", 
+         color = "#004d00")
+```
+
+### emAndamento {.value-box}
+
+```{r}
+valueBox(value = paste(format(brUltimoDia$emAcompanhamentoNovos, big.mark = "."), " ", sep = "", 
+          "(", round(brUltimoDia$emAcompanhamentoNovos/brUltimoDia$casosAcumulado, digits = 2)*100,"%",")"), 
+         caption = "Casos em Acompanhamento", 
+         icon = "fas fa-search", 
+         color = "#997a00")
+```
+
+### obitos {.value-box}
+
+```{r}
+valueBox(value = paste(format(brUltimoDia$obitosAcumulado, big.mark = "."), " ", sep = "", 
+                         "(", round(brUltimoDia$obitosAcumulado/brUltimoDia$casosAcumulado, digits = 2)*100,"%",")"), 
+         caption = "Óbitos Confirmados", 
+         icon = "fa-heart", 
+         color = "#4e0000")
+```
+
+
+
+
+Column {.tabset}
+-------------------------------------
+
+### Números do Covid-19 no Brasil
+
+```{r}
+
+plot_ly(data = br , x = ~data, y = ~casosAcumulado,  
+        name = 'Total de Casos', 
+      line = list(color = "#00004d"),
+        type = 'scatter', mode = 'lines') %>%
+  
+  add_trace(y = ~ obitosAcumulado,
+                    name = "Total de Óbitos",
+            line = list(color = "#ff8c00")) %>%
+      
+
+  layout(title = "",
+                 yaxis = list(title = ""),
+                 xaxis = list(title = "Data"),
+                 legend = list(x = 0.05, y = 0.9),
+                 hovermode = "compare")
+ 
+```   
+
+### Números do Covid-19 no Brasil - Log
+
+```{r}
+
+plot_ly(data = br , x = ~data, y = ~casosAcumuladoLog,  
+        name = 'Total de Casos', 
+        line = list(color = "#00004d"),
+        type = 'scatter', mode = 'lines') %>%
+  
+  add_trace(y = ~ obitosAcumuladoLog,
+                    name = "Total de Óbitos",
+                   line = list(color = "#ff8c00")) %>%
+
+  layout(title = "",
+                 yaxis = list(title = ""),
+                 xaxis = list(title = "Data"),
+                 legend = list(x = 0.05, y = 0.9),
+                 hovermode = "compare")
+ 
+```   
+
+### Casos e Óbitos Confirmados por dia 
+
+```{r}
+plot_ly(data = br , x = ~data, y = ~casosNovos,  
+        name = 'Casos por dia', 
+        line = list(color = "#00004d"),
+        type = 'scatter', mode = 'lines') %>%
+  
+  add_trace(y = ~ obitosNovos,
+                    name = "Óbitos por dia",
+                    line = list(color = "#ff8c00")) %>%
+
+  layout(title = "",
+                 yaxis = list(title = ""),
+                 xaxis = list(title = "Data"),
+                 legend = list(x = 0.05, y = 0.9),
+                 hovermode = "compare")
+  
+```   
+
+Row {data-height=400}
+-------------------------------------
+   
+### 10 UFs com mais Casos Acumulados
+    
+```{r}
+plot_ly(data = top10 , x = ~estado, y = ~casosAcumulado, 
+         marker = list(color = 'rgb(0,0,77)'),
+        type = "bar") %>%
+  
+  layout(title = "",
+                 yaxis = list(title = "Casos Acumulados"),
+                 xaxis = list(title = "Estado"),
+                 legend = list(x = 0.05, y = 0.9),
+                showlegend = FALSE,
+                 hovermode = "compare")
+```
+ 
+### Evolução dos Óbitos Diários no Brasil {data-width=300}
+
+```{r}
+
+plot_ly( data = mortalidadeDiaria , x =~mes, y = ~obitoDia,  
+          marker = list(color = 'rgb(63,0,0)'),
+         type = "bar",
+         text =  ~obitoDia,textposition = 'auto') %>%
+  
+  
+  layout(title = "",
+                 yaxis = list(title = "Óbitos por Dia"),
+                 xaxis = list(title = ""),
+                 legend = list(x = 0.05, y = 0.9),
+                showlegend = FALSE,
+                 hovermode = "compare")
+```
+
+UF
+=======================================================================
+
+```{r}
+selectInput("uf", label = "Estado: ", choices = na.omit(unique(estados$estado)), selected = "SP")
+```
+
+Column {.tabset}
+-------------------------------------
+   
+### Casos e Óbitos Acumulados
+
+```{r}
+
+
+renderPlotly({
+  grafico = filter(estados, estado == input$uf) %>%
+    
+    plot_ly(., x = ~data, y = ~casosAcumulado,color = ~estado,
+        name = 'Total de Casos', 
+        line = list(color = "#00004d"),
+        type = 'scatter', mode = 'lines') %>%
+  
+  add_trace(y = ~ obitosAcumulado,
+                    name = "Total de Óbitos",
+             line = list(color = "#ff8c00")) %>%
+    
+  layout(title = "",
+                 yaxis = list(title = "Casos Acumulados"),
+                 xaxis = list(title = "Data"),
+                 legend = list(x = 0.05, y = 0.9),
+                 hovermode = "compare")
+    
+})
+
+```   
+
+Row {data-height=400}
+-------------------------------------
+   
+### Casos e Óbitos por dia
+    
+```{r}
+
+renderPlotly({
+  grafico = filter(estados, estado == input$uf) %>%
+    plot_ly(., x = ~data, y = ~casosNovos,color = ~estado,
+        name = 'Casos  por dia', 
+        line = list(color = "#00004d"),
+        type = 'scatter', mode = 'lines') %>%
+  
+  add_trace(y = ~ obitosNovos,
+                    name = "Óbitos por dia",
+             line = list(color = "#ff8c00")) %>%
+    
+  layout(title = "",
+                 yaxis = list(title = "Casos Acumulados"),
+                 xaxis = list(title = "Data"),
+                 legend = list(x = 0.05, y = 0.9),
+                 hovermode = "compare")
+    
+})
+```
+ 
+### Dados do Estado Selecionado  {data-width=300}
+
+Taxa de Mortalidade 
+```{r}
+
+
+renderGauge({
+  
+  escolhido = filter(estadosUltimoDia, estado == input$uf)
+   
+  gauge(escolhido$txMortalidade, 
+        min = min(estadosUltimoDia$txMortalidade), 
+        max = max(estadosUltimoDia$txMortalidade), 
+        symbol = '%', 
+          gaugeSectors(
+            success = c(0, 7),
+            warning = c(7, 100)))
+})
+
+```
+Porcentagem dos Casos do Brasil no Estado Selecionado
+```{r}
+renderGauge({
+  
+  escolhido = filter(estadosUltimoDia, estado == input$uf)
+  
+   participacaoBrasil = round((escolhido$casosAcumulado / brUltimoDia$casosAcumulado)*100,digits = 2)
+  gauge(participacaoBrasil, min = 0, 
+        max = 100, symbol = '%', 
+          gaugeSectors(
+          success = c(0, 10), warning = c(10, 15), danger = c(15, 100)
+            
+          ))
+  
+})
+
+```
+
+
+Mapa do Brasil
+=======================================================================
+Column {.tabset}
+-------------------------------------
+   
+### Total de Casos por UF
+
+```{r}
+d3plus(data = estadosUltimoDia,
+         type = "geo_map",
+        # locale = "pt_BR",
+         id = "estado") %>% 
+  d3plusCoords(
+    value = "https://gist.githubusercontent.com/ruliana/1ccaaab05ea113b0dff3b22be3b4d637/raw/196c0332d38cb935cfca227d28f7cecfa70b412e/br-states.json",
+    projection = "equirectangular") %>% 
+  d3plusColor(value = "casosAcumulado",
+              heatmap = RColorBrewer::brewer.pal(n = 6, name = "YlOrBr")) %>% 
+ d3plusText("estado") %>% 
+  d3plusTooltip(value = c("estado", "casosAcumulado","obitosAcumulado","txMortalidade"))
+```   
+ 
+### Total de Casos por mil habitantes
+    
+```{r}
+d3plus(data = estadosUltimoDia,
+         type = "geo_map",
+         #locale = "pt_BR",
+         id = "estado") %>% 
+  d3plusCoords(
+    value = "https://gist.githubusercontent.com/ruliana/1ccaaab05ea113b0dff3b22be3b4d637/raw/196c0332d38cb935cfca227d28f7cecfa70b412e/br-states.json",
+    projection = "equirectangular") %>% 
+  d3plusColor(value = "casoAcumuladoPorPopulacao",
+              heatmap = RColorBrewer::brewer.pal(n = 6, name = "GnBu")) %>% 
+ d3plusText("estado") %>% 
+  d3plusTooltip(value = c("estado", "casosAcumulado","casoAcumuladoPorPopulacao","ObitosAcumuladoPorPopulacao","txMortalidade"))
+
+```
+
+### Taxa de Mortalidade
+```{r}
+d3plus(data = estadosUltimoDia,
+         type = "geo_map",
+         #locale = "pt_BR",
+         id = "estado") %>% 
+  d3plusCoords(
+    value = "https://gist.githubusercontent.com/ruliana/1ccaaab05ea113b0dff3b22be3b4d637/raw/196c0332d38cb935cfca227d28f7cecfa70b412e/br-states.json",
+    projection = "equirectangular") %>% 
+  d3plusColor(value = "txMortalidade",
+              heatmap = RColorBrewer::brewer.pal(n = 5, name = "YlGn")) %>% 
+ d3plusText("estado") %>% 
+  d3plusTooltip(value = c("estado", "casosAcumulado","txMortalidade"))
+```
+
+
+Mundo
+=======================================================================
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+    
+### 10 Paises com mais Casos Acumulados
+    
+```{r}
+
+plot_ly(data = top10p , x = ~PaisesPT, y = ~CasosAcumulados, 
+         marker = list(color = 'rgb(0,0,77)'),
+        type = "bar") %>%
+  
+  layout(title = "",
+                 yaxis = list(title = "Casos Acumulados"),
+                 xaxis = list(title = "Estado"),
+                 legend = list(x = 0.05, y = 0.9),
+                showlegend = FALSE,
+                 hovermode = "compare")
+```
+
+### Casos Acumulado por população
+
+```{r}
+
+plot_ly(data = top10p , x = ~PaisesPT, y = ~casoAcumuladoPorPopulacao, 
+         marker = list(color = 'rgb(0,0,77)'),
+        type = "bar") %>%
+  
+  layout(title = "",
+                 yaxis = list(title = "Casos Acumulados"),
+                 xaxis = list(title = "Estado"),
+                 legend = list(x = 0.05, y = 0.9),
+                showlegend = FALSE,
+                 hovermode = "compare")
+```
+   
+Row {.tabset .tabset-fade}
+-------------------------------------
+   
+### Casos Acumulados
+
+```{r}
+
+plot_ly(data = top10PaisHistorico , x = ~Data, y = ~CasosAcumulados, color = ~PaisesPT,
+        type = 'scatter', mode = 'lines') %>%
+  layout(
+    yaxis = list(title = "Casos Acumulados"),
+    xaxis = list(title = "Data"),
+    legend = list(x = 0.05, y = 0.5),
+    #showlegend = FALSE,
+    hovermode = "compare")
+
+```   
+ 
+### Óbitos Acumulados
+    
+```{r}
+plot_ly(data = top10PaisHistorico , x = ~Data, y = ~ObitosAcumulados, color = ~PaisesPT,
+        type = 'scatter', mode = 'lines') %>%
+  layout(
+    yaxis = list(title = "Óbitos Acumulados"),
+    xaxis = list(title = "Data"),
+    legend = list(x = 0.05, y = 0.5),
+    #showlegend = FALSE,
+    hovermode = "compare")
+  
+```
+
+### Casos Acumulados Por mil habitante
+
+
+```{r}
+plot_ly(data = top10PaisHistorico , x = ~Data, y = ~casoAcumuladoPorPopulacao, color = ~PaisesPT,
+        type = 'scatter', mode = 'lines') %>%
+  layout(
+    yaxis = list(title = "Casos Acumulados"),
+    xaxis = list(title = "Data"),
+    legend = list(x = 0.05, y = 0.5),
+    #showlegend = FALSE,
+    hovermode = "compare")
+
+```   
+ 
+### Óbitos Acumulados Por mil habitante
+    
+```{r}
+plot_ly(data = top10PaisHistorico , x = ~Data, y = ~ObitosAcumuladoPorPopulacao, color = ~PaisesPT,
+        type = 'scatter', mode = 'lines') %>%
+  layout(
+    yaxis = list(title = "Óbitos Acumulados"),
+    xaxis = list(title = "Data"),
+    legend = list(x = 0.05, y = 0.5),
+    #showlegend = FALSE,
+    hovermode = "compare")
+  
+```
+
+
