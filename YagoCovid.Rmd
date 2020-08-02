@@ -53,6 +53,10 @@ runtime: shiny
 
 ```{r global, include=FALSE}
 ## Pacotes
+
+#remotes::install_github("liibre/coronabr")
+#remotes::install_github("paulofelipe/D3plusR")
+#devtools::install_github("RamiKrispin/coronavirus")
 library(flexdashboard)
 library(dplyr)
 library(readr)
@@ -61,19 +65,24 @@ library(devtools)
 library(plotly)
 library(crosstalk)
 library(manipulateWidget)
-#remotes::install_github("paulofelipe/D3plusR")
 library(D3plusR)
 library(janitor)
 library(tidyverse)
 library(lubridate)
-
+library(shiny)
+library(tidyr)
+library(coronabr)
+library(coronavirus)
+update_dataset(silence = TRUE)
 ##
 
-## Base
-dados <- read_delim("~/R/COVID19_ATUAL_COMPLETO.csv", 
-    ";", escape_double = FALSE, trim_ws = TRUE)
-dados$data = as.Date(dados$data, "%d/%m/%y")
+## Base BR
+data("coronavirus")
 
+
+dados <- get_corona_minsaude()
+
+dados$populacaoTCU2019 = as.numeric(dados$populacaoTCU2019)
 dados = mutate(dados, casosAcumuladoLog = log(casosAcumulado))
 dados = mutate(dados, obitosAcumuladoLog = log(obitosAcumulado))
 dados = mutate(dados, emAcompanhamentoNovosLog = log(emAcompanhamentoNovos))
@@ -113,28 +122,42 @@ mortalidadeDiaria$mes = ordered(mortalidadeDiaria$mes,
 
 
 
-##
-dadosMundo <- read_csv("dadosMundo.csv", 
-    locale = locale(encoding = "ISO-8859-1"))
-dadosMundo$Data = as.Date(dadosMundo$Data)
+## Base Mundo
+populacaoPaises = read.csv("PopulacaoPaises.csv")
+dadosMundo = left_join(coronavirus,populacaoPaises, by=c("country"="PaisesEN"))
+dadosMundo = mutate(dadosMundo, casesLog = log(cases))
+dadosMundo = mutate(dadosMundo, casesPorPopulacao = (cases/Populacao)*1000)
+dadosMundo = mutate(dadosMundo, casoAcumuladoPorPopulacao = round(casesPorPopulacao, digits =2))
+dadosMundo$date
+#falta mundo
 
-dadosMundo = mutate(dadosMundo, PopulacaoMilhao = Populacao * (10^6))  
-dadosMundo = mutate(dadosMundo, casosAcumuladoLog = log(CasosAcumulados))
-dadosMundo = mutate(dadosMundo, obitosAcumuladoLog = log(ObitosAcumulados))
-dadosMundo = mutate(dadosMundo, casoAcumuladoPorPopulacao = (CasosAcumulados/PopulacaoMilhao)*1000)
-dadosMundo = mutate(dadosMundo, ObitosAcumuladoPorPopulacao = (ObitosAcumulados/PopulacaoMilhao)*1000)
-dadosMundo = mutate(dadosMundo, casoAcumuladoPorPopulacao = round(casoAcumuladoPorPopulacao, digits =2))
-dadosMundo = mutate(dadosMundo, ObitosAcumuladoPorPopulacao = round(ObitosAcumuladoPorPopulacao, digits = 2))
-
-
-top10p = filter(dadosMundo, Data == max(dadosMundo$Data, na.rm = T))
-top10p = arrange(top10p, desc(CasosAcumulados)) 
-top10p = head(top10p$PaisesPT,10)
-top10PaisHistorico = filter(dadosMundo, PaisesPT %in% top10p  & CasosAcumulados != 0)
-top10p = filter(dadosMundo, PaisesPT %in% top10p & Data == max(dadosMundo$Data, na.rm = T))
+top10p <- dadosMundo %>% 
+  filter(type == "confirmed") %>%
+  group_by(country) %>%
+  summarise(total_cases = sum(cases)) %>%
+  arrange(-total_cases) %>%
+  head(10)
 
 
+top10p = left_join(top10p,populacaoPaises, by=c("country"="PaisesEN"))
+top10p = mutate(top10p, casesPorPopulacao = (total_cases/PopulacaoMilhao)*1000)
 
+topPaises = top10p$country
+
+paises <- dadosMundo %>% 
+  filter(country %in% topPaises) %>%
+  group_by(country, type, date) %>%
+  summarise(total_cases = sum(cases)) %>%
+  pivot_wider(names_from = type, values_from = total_cases) %>%
+  arrange(date) %>%
+  mutate(active = confirmed - death - recovered) %>%
+  mutate(active_total = cumsum(active),
+                recovered_total = cumsum(recovered),
+                death_total = cumsum(death))
+
+paises = left_join(paises,populacaoPaises, by=c("country"="PaisesEN"))
+paises = mutate(paises, casesPorPopulacao = (active_total/PopulacaoMilhao)*1000)
+paises = mutate(paises, obitosPorPopulacao = (death_total/PopulacaoMilhao)*1000)
 ##
 
 
@@ -314,18 +337,17 @@ Column {.tabset}
 
 ```{r}
 
-
 renderPlotly({
   grafico = filter(estados, estado == input$uf) %>%
     
     plot_ly(., x = ~data, y = ~casosAcumulado,color = ~estado,
         name = 'Total de Casos', 
-        line = list(color = "#00004d"),
+        line = list(color = "#636EFA"),
         type = 'scatter', mode = 'lines') %>%
   
   add_trace(y = ~ obitosAcumulado,
                     name = "Total de Óbitos",
-             line = list(color = "#ff8c00")) %>%
+             line = list(color = "#EF553B")) %>%
     
   layout(title = "",
                  yaxis = list(title = "Casos Acumulados"),
@@ -334,6 +356,8 @@ renderPlotly({
                  hovermode = "compare")
     
 })
+
+
 
 ```   
 
@@ -348,12 +372,12 @@ renderPlotly({
   grafico = filter(estados, estado == input$uf) %>%
     plot_ly(., x = ~data, y = ~casosNovos,color = ~estado,
         name = 'Casos  por dia', 
-        line = list(color = "#00004d"),
+        line = list(color = "#636EFA"),
         type = 'scatter', mode = 'lines') %>%
   
   add_trace(y = ~ obitosNovos,
                     name = "Óbitos por dia",
-             line = list(color = "#ff8c00")) %>%
+             line = list(color = "#EF553B")) %>%
     
   layout(title = "",
                  yaxis = list(title = "Casos Acumulados"),
@@ -466,14 +490,13 @@ Row {.tabset .tabset-fade}
 ### 10 Paises com mais Casos Acumulados
     
 ```{r}
-
-plot_ly(data = top10p , x = ~PaisesPT, y = ~CasosAcumulados, 
+plot_ly(data = top10p , x = ~country, y = ~total_cases, 
          marker = list(color = 'rgb(0,0,77)'),
         type = "bar") %>%
   
   layout(title = "",
                  yaxis = list(title = "Casos Acumulados"),
-                 xaxis = list(title = "Estado"),
+                 xaxis = list(title = "Países "),
                  legend = list(x = 0.05, y = 0.9),
                 showlegend = FALSE,
                  hovermode = "compare")
@@ -482,14 +505,13 @@ plot_ly(data = top10p , x = ~PaisesPT, y = ~CasosAcumulados,
 ### Casos Acumulado por população
 
 ```{r}
-
-plot_ly(data = top10p , x = ~PaisesPT, y = ~casoAcumuladoPorPopulacao, 
+plot_ly(data = top10p , x = ~country, y = ~casesPorPopulacao, 
          marker = list(color = 'rgb(0,0,77)'),
         type = "bar") %>%
   
   layout(title = "",
                  yaxis = list(title = "Casos Acumulados"),
-                 xaxis = list(title = "Estado"),
+                 xaxis = list(title = "Países"),
                  legend = list(x = 0.05, y = 0.9),
                 showlegend = FALSE,
                  hovermode = "compare")
@@ -502,7 +524,7 @@ Row {.tabset .tabset-fade}
 
 ```{r}
 
-plot_ly(data = top10PaisHistorico , x = ~Data, y = ~CasosAcumulados, color = ~PaisesPT,
+plot_ly(data = paises , x = ~date, y = ~active_total, color = ~country,
         type = 'scatter', mode = 'lines') %>%
   layout(
     yaxis = list(title = "Casos Acumulados"),
@@ -516,7 +538,8 @@ plot_ly(data = top10PaisHistorico , x = ~Data, y = ~CasosAcumulados, color = ~Pa
 ### Óbitos Acumulados
     
 ```{r}
-plot_ly(data = top10PaisHistorico , x = ~Data, y = ~ObitosAcumulados, color = ~PaisesPT,
+
+plot_ly(data = paises , x = ~date, y = ~death_total, color = ~country,
         type = 'scatter', mode = 'lines') %>%
   layout(
     yaxis = list(title = "Óbitos Acumulados"),
@@ -526,34 +549,4 @@ plot_ly(data = top10PaisHistorico , x = ~Data, y = ~ObitosAcumulados, color = ~P
     hovermode = "compare")
   
 ```
-
-### Casos Acumulados Por mil habitante
-
-
-```{r}
-plot_ly(data = top10PaisHistorico , x = ~Data, y = ~casoAcumuladoPorPopulacao, color = ~PaisesPT,
-        type = 'scatter', mode = 'lines') %>%
-  layout(
-    yaxis = list(title = "Casos Acumulados"),
-    xaxis = list(title = "Data"),
-    legend = list(x = 0.05, y = 0.5),
-    #showlegend = FALSE,
-    hovermode = "compare")
-
-```   
- 
-### Óbitos Acumulados Por mil habitante
-    
-```{r}
-plot_ly(data = top10PaisHistorico , x = ~Data, y = ~ObitosAcumuladoPorPopulacao, color = ~PaisesPT,
-        type = 'scatter', mode = 'lines') %>%
-  layout(
-    yaxis = list(title = "Óbitos Acumulados"),
-    xaxis = list(title = "Data"),
-    legend = list(x = 0.05, y = 0.5),
-    #showlegend = FALSE,
-    hovermode = "compare")
-  
-```
-
 
